@@ -1,0 +1,163 @@
+:root {
+  --bg: #101014;
+  --ink: #f2f2f5;
+  --mono: "SF Mono", "Menlo", "Consolas", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+#stage-wrap {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 12px;
+}
+
+/* 视频舞台：宽高比由 JS 按摄像头实际分辨率设置（--ar），保证特效与画面严格对齐 */
+#stage {
+  position: relative;
+  width: min(100%, calc((100vh - 72px) * var(--ar, 1.7778)));
+  aspect-ratio: var(--ar, 16 / 9);
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+
+#cam,
+#fx {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* 自拍镜像：视频翻转；canvas 不翻转（文字/坐标在 JS 里自行镜像） */
+#cam { transform: scaleX(-1); object-fit: cover; }
+
+#fx { pointer-events: none; }
+
+#hud {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: #d7ffd9;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  pointer-events: none;
+  white-space: pre-line;
+  max-width: 70%;
+}
+
+#hint {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+#hint code {
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ---------- 启动遮罩：请求权限 / 错误提示 ---------- */
+#overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 8, 12, 0.86);
+  backdrop-filter: blur(4px);
+  z-index: 10;
+}
+
+#overlay.on { display: flex; }
+
+.ov-card {
+  text-align: center;
+  padding: 36px 44px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  max-width: 80%;
+}
+
+.ov-title {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.35em;
+  color: #9ad0d8;
+  margin-bottom: 14px;
+}
+
+#ov-msg {
+  font-size: 15px;
+  line-height: 1.8;
+  color: #e8e8ee;
+  white-space: pre-line;
+}
+
+#ov-msg small {
+  display: block;
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+#ov-retry,
+#ov-copy {
+  margin-top: 18px;
+  padding: 8px 22px;
+  font-size: 14px;
+  color: #101014;
+  background: #d7ffd9;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#ov-copy {
+  display: block;
+  margin: 14px auto 0;
+  background: rgba(255, 255, 255, 0.12);
+  color: #e8e8ee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  font-size: 13px;
+}
+
+#ov-demo {
+  display: block;
+  margin-top: 16px;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.45);
+}
