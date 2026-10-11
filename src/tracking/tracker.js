@@ -1,13 +1,20 @@
-// 模块 2：Tracking —— 加载 MediaPipe 三个模型（脸 / 手 / 身体），
+// 模块 2：Tracking —— 加载 MediaPipe 模型（脸 / 手 / 身体 / 人物分割），
 // 每帧检测并产出统一的 SceneState：
 // {
 //   frame: {w, h},
 //   face:  null | { center, chin, nose, bbox, faceWidth, eyes:{left,right}, landmarks },
 //   hands: [ { palm, fingers, extCount, open, fist, fingertips, landmarks } ],
 //   body:  null | { center, landmarks },
+//   personMask: null | canvas,   // 人物剪影（白=人，透明=背景），供人物图层合成
 // }
 
-import { FilesetResolver, FaceLandmarker, HandLandmarker, PoseLandmarker } from "/vendor/mediapipe/vision_bundle.mjs";
+import {
+  FilesetResolver,
+  FaceLandmarker,
+  HandLandmarker,
+  PoseLandmarker,
+  ImageSegmenter,
+} from "/vendor/mediapipe/vision_bundle.mjs";
 import { CONFIG } from "../config.js";
 import { analyzeFace, analyzeHand } from "./scene.js";
 
@@ -19,6 +26,11 @@ export class Tracker {
     this.face = null;
     this.hand = null;
     this.pose = null;
+    this.segmenter = null;
+    this.personMask = null;   // canvas：每帧刷新的人物剪影
+    this.segFlip = 0;         // 掩码极性：1=非0是人物 -1=非0是背景 0=未定（未定时不产出人物层）
+    this.segBad = 0;          // 掩码连续不可用帧数（过长则停用分割）
+    this.segFailures = 0;     // 分割连续失败即停用，避免每帧刷错误
     this.frameCount = 0;
     this.lastTs = 0;
     this.cachedBody = null;
@@ -79,6 +91,19 @@ export class Tracker {
     this.pose = await make(PoseLandmarker, CONFIG.models.pose, {
       numPoses: 1,
     });
+    onProgress("LOADING MODELS 3/4");
+
+    // 人物分割（可选）：失败不阻塞启动，只是问号弹幕改为人前飘过
+    if (CONFIG.models.selfie) {
+      try {
+        this.segmenter = await make(ImageSegmenter, CONFIG.models.selfie, {
+          outputCategoryMask: true,
+          outputConfidenceMask: false,
+        });
+      } catch (err) {
+        console.warn("[tracker] 人物分割模型不可用，弹幕将从人前飘过", err);
+      }
+    }
     onProgress("MODELS READY");
   }
 
@@ -152,11 +177,128 @@ export class Tracker {
       }
     }
 
+    // 人物分割：产出人物剪影（模型输出分辨率小，每帧运行开销低）。
+    // 掩码极性自校准：人脸检测器告诉我们脸在哪——正确的掩码应为
+    // 「脸区域=人物(非0)、画面四角=背景(0)」；两者对调说明该机器/输入下
+    // 掩码极性反转，自动翻转使用。极性未判定、覆盖率异常（几乎全0或全1，
+    // 意味着掩码失效）时不产出人物层——特效回到人前显示，宁可可见也不遮蔽。
+    // 连续失败/连续坏掩码过长则停用分割，避免每帧空耗。
+    if (this.segmenter) {
+      try {
+        this.segmenter.segmentForVideo(video, ts, (result) => {
+          const mask = result.categoryMask;
+          const mw = mask.width;
+          const mh = mask.height;
+          const data = mask.getAsUint8Array();
+
+          // 帧坐标 -> 掩码坐标 的区块采样：返回非0占比
+          const sample = (x, y, r) => {
+            const x0 = Math.max(0, Math.floor(((x - r) / w) * mw));
+            const x1 = Math.min(mw - 1, Math.ceil(((x + r) / w) * mw));
+            const y0 = Math.max(0, Math.floor(((y - r) / h) * mh));
+            const y1 = Math.min(mh - 1, Math.ceil(((y + r) / h) * mh));
+            let nz = 0;
+            let n = 0;
+            for (let yy = y0; yy <= y1; yy++) {
+              for (let xx = x0; xx <= x1; xx++) {
+                n++;
+                if (data[yy * mw + xx] > 0) nz++;
+              }
+            }
+            return n ? nz / n : 0;
+          };
+
+          // 1) 极性判定（只需一次，有脸即可判）
+          if (faceScene && this.segFlip === 0) {
+            const faceHit = sample(
+              faceScene.center.x, faceScene.center.y,
+              Math.max(12, faceScene.faceWidth * 0.15),
+            ) > 0.5;
+            const cw = w * 0.05; // 四角各取 5% 宽度的角块
+            const cornerHit = (
+              sample(cw, cw, cw * 0.6)
+              + sample(w - cw, cw, cw * 0.6)
+              + sample(cw, h - cw, cw * 0.6)
+              + sample(w - cw, h - cw, cw * 0.6)
+            ) / 4 > 0.5;
+            if (faceHit && !cornerHit) this.segFlip = 1;
+            else if (!faceHit && cornerHit) this.segFlip = -1;
+            // 两者同真/同假：掩码不可信，保持未定
+          }
+
+          // 2) 持续校验（极性已定时）：画面四角应始终是背景；
+          //    覆盖率粗查（每 16 像素抽 1 个）：人物占比异常接近全屏也视为失效
+          let usable = this.segFlip !== 0;
+          if (usable) {
+            const cw = w * 0.05;
+            const cornerWrong = [
+              [sample(cw, cw, cw * 0.6), cw, cw],
+              [sample(w - cw, cw, cw * 0.6), w - cw, cw],
+              [sample(cw, h - cw, cw * 0.6), cw, h - cw],
+              [sample(w - cw, h - cw, cw * 0.6), w - cw, h - cw],
+            ].filter(([v]) => (v > 0.5) === (this.segFlip === 1)).length; // 被判成人物的角数
+            let nzCount = 0;
+            let totalCount = 0;
+            for (let i = 0; i < data.length; i += 16) {
+              totalCount++;
+              if (data[i] > 0) nzCount++;
+            }
+            const ratio = totalCount ? nzCount / totalCount : 0;
+            if (cornerWrong >= 3 || ratio > 0.92 || ratio < 0.02) usable = false;
+          }
+
+          if (!usable) {
+            this.segBad++;
+            this.personMask = null;
+            if (this.segBad > 240) {
+              this.segmenter.close?.();
+              this.segmenter = null;
+              console.warn("[tracker] 人物分割掩码持续异常，已停用（特效改为人前显示）");
+            }
+          } else {
+            this.segBad = 0;
+            const personIsNonZero = this.segFlip === 1;
+            if (!this.personMask || this.personMask.width !== mw || this.personMask.height !== mh) {
+              this.personMask = document.createElement("canvas");
+              this.personMask.width = mw;
+              this.personMask.height = mh;
+            }
+            const g = this.personMask.getContext("2d");
+            const img = g.createImageData(mw, mh);
+            const px = img.data;
+            for (let i = 0; i < data.length; i++) {
+              if ((data[i] > 0) === personIsNonZero) {
+                px[i * 4] = 255;
+                px[i * 4 + 1] = 255;
+                px[i * 4 + 2] = 255;
+                px[i * 4 + 3] = 255;
+              }
+            }
+            g.putImageData(img, 0, 0);
+          }
+          result.close();
+        });
+        this.segFailures = 0;
+      } catch (err) {
+        this.segFailures++;
+        this.personMask = null;
+        if (this.segFailures <= 3 || this.segFailures % 100 === 0) {
+          console.warn("[tracker] person segment error", err);
+        }
+        if (this.segFailures >= 30) {
+          this.segmenter.close?.();
+          this.segmenter = null;
+          console.warn("[tracker] 人物分割已停用（连续失败）");
+        }
+      }
+    }
+
     return {
       frame: { w, h },
       face: faceScene,
       hands,
       body: this.cachedBody,
+      personMask: this.personMask,
       stats: this.stats,
     };
   }

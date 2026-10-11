@@ -7,16 +7,22 @@
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="./styles.css" />
 </head>
-<body>
+<body data-view="home">
   <main id="stage-wrap">
     <div id="stage">
       <video id="cam" playsinline muted autoplay></video>
+      <!-- 图层顺序：视频 → 背景特效（问号弹幕，人后飘过）→ 人物剪影 → 前景特效 -->
+      <canvas id="fx-back"></canvas>
+      <canvas id="person"></canvas>
       <canvas id="fx"></canvas>
       <div id="hud">
         <div id="hud-status">INIT…</div>
         <div id="hud-gesture">Gesture: -</div>
         <div id="hud-effect">Effect: -</div>
       </div>
+      <!-- 互动模式界面：返回首页（左上角）+ 当前模式提示（右上角），首页时隐藏 -->
+      <button id="back-home" type="button">← 返回首页</button>
+      <div id="mode-badge"></div>
       <div id="overlay">
         <div class="ov-card">
           <div class="ov-title">MOOD BOOTH</div>
@@ -28,6 +34,10 @@
       </div>
     </div>
   </main>
+  <!-- 底部情绪选择栏：入口由 src/main.js 按 mood-state.js 的开放清单生成 -->
+  <nav id="mood-bar" aria-label="情绪选择">
+    <div class="mood-bar-inner"></div>
+  </nav>
   <footer id="hint">
     [D] 关键点开关 &nbsp;·&nbsp; [C] 清空特效 &nbsp;·&nbsp; 加 <code>?demo=1</code> 无摄像头演示
   </footer>

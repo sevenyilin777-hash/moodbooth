@@ -2,7 +2,7 @@
 // 每帧输出 { events, states } 供 InteractionController 消费。
 //
 // events：边沿触发（本帧刚发生的动作），如 blink / fist / palm-open…
-// states：持续状态（是否仍保持），如 coverFace / stillActive / openHands…
+// states：持续状态（是否仍保持），如 coverFace / openHands…
 //
 // 同时缓存最近的脸部锚点（脸中心 / 下巴 / 眼睛位置），
 // 供特效绑定身体位置使用 —— 即使脸短暂丢失，1.2s 内特效仍能跟着最后位置。
@@ -10,8 +10,8 @@
 import { BlinkDetector } from "./detectors/blink-detector.js";
 import { OpenPalmDetector } from "./detectors/open-palm-detector.js";
 import { FistDetector } from "./detectors/fist-detector.js";
+import { FistShakeDetector } from "./detectors/fist-shake-detector.js";
 import { CoverFaceDetector } from "./detectors/cover-face-detector.js";
-import { StillnessDetector } from "./detectors/stillness-detector.js";
 import { ApproachDetector } from "./detectors/approach-detector.js";
 import { SurpriseDetector } from "./detectors/surprise-detector.js";
 import { ChinTouchDetector } from "./detectors/chin-touch-detector.js";
@@ -23,8 +23,8 @@ export class GestureRecognizer {
     this.blink = new BlinkDetector();
     this.openPalm = new OpenPalmDetector();
     this.fist = new FistDetector();
+    this.fistShake = new FistShakeDetector();
     this.cover = new CoverFaceDetector();
-    this.still = new StillnessDetector();
     this.approach = new ApproachDetector();
     this.surprise = new SurpriseDetector();
     this.chin = new ChinTouchDetector();
@@ -74,10 +74,9 @@ export class GestureRecognizer {
       fistOut.fistHands = [];
     } else {
       events.push(...palmOut.events, ...fistOut.events);
+      // 握拳 + 明显挥动（ANGRY）：与遮脸/托下巴互斥，避免误触发
+      events.push(...this.fistShake.update(ctx));
     }
-
-    const stillOut = this.still.update(ctx);
-    events.push(...stillOut.events);
 
     const approachOut = this.approach.update(ctx);
     events.push(...approachOut.events);
@@ -94,10 +93,6 @@ export class GestureRecognizer {
         chinNear: chinOut.chinNear,
         chinReady: chinOut.chinReady,
         tiltDeg: chinOut.tiltDeg,
-        stillActive: stillOut.stillActive,
-        stillSeconds: stillOut.stillSeconds,
-        stillRequiredMs: stillOut.requiredMs,
-        motion: stillOut.motion,
         surpriseActive: surpriseOut.surpriseActive,
         jawOpen: surpriseOut.jawOpen,
         eyeWide: surpriseOut.eyeWide,

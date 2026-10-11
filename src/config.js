@@ -11,6 +11,7 @@ export const CONFIG = {
     face: "/models/face_landmarker.task",
     hand: "/models/hand_landmarker.task",
     pose: "/models/pose_landmarker_lite.task",
+    selfie: "/models/selfie_segmenter.tflite", // 人物分割：问号弹幕从人的背后飘过
     // 人脸模型单独的 delegate：GPU 正常可用；若个别机器上异常可改 "CPU"
     faceDelegate: "GPU",
   },
@@ -32,20 +33,19 @@ export const CONFIG = {
     dropsPerBlink: 1,       // 一次有效眨眼生成一滴眼泪
   },
 
+  // ---------- 握拳挥动 (ANGRY) ----------
+  angry: {
+    shakeSpeed: 380,        // 拳头平滑速度阈值（px/s）：明显挥动才触发，普通握拳不触发
+    cooldownMs: 800,        // 同一只手两次触发的最小间隔
+    blastsPerBurst: [5, 7], // 每次迸发生成的爆炸纹样数量范围
+    blastRadius: [110, 180],// 纹样距拳头中心的距离范围（px）
+  },
+
   // ---------- 双手遮脸 (SHY) ----------
   coverFace: {
     margin: 0.45,           // 手掌落点允许超出脸部包围盒的比例（相对脸宽）
     minHoldMs: 250,         // 需持续遮挡这么久才进入状态
     ringIntervalMs: 380,    // 圆环生成间隔
-  },
-
-  // ---------- 静止 (TIRED / CALM) ----------
-  stillness: {
-    requiredMs: 5000,       // 保持静止 5 秒触发（3–5s 区间的上限）
-    drowsyBonusMs: 2000,    // 眼睛持续闭合时最多缩短的等待（打盹加成，最短约 3s）
-    motionThreshold: 0.045, // 归一化运动速度低于该值视为“静止”
-    exitThreshold: 0.09,    // 高于该值才退出（滞回）
-    smooth: 0.12,           // 运动速度 EMA 平滑系数
   },
 
   // ---------- 张大嘴巴 (SURPRISED) ----------
@@ -54,6 +54,18 @@ export const CONFIG = {
     minHoldMs: 250,         // 嘴巴需保持张开这么久才触发
     rearmJaw: 0.2,          // 嘴闭上回落到该值以下才重新武装
     cooldownMs: 2000,
+  },
+
+  // ---------- 烟花齐射 (SURPRISED 视觉) ----------
+  surpriseFx: {
+    volley: [10, 14],       // 每次触发的烟花数量
+    maxActive: 48,          // 场上烟花同时存在上限，防止连续触发无限累积
+    size: [60, 135],        // 烟花半宽（px），保持素材原始宽高比，逐枚随机形成大小变化
+    launchIntervalMs: [180, 280], // 相邻两枚烟花的发射间隔（更密集，同屏迸发更多）
+    riseMs: [600, 800],     // 阶段一：上升时长
+    revealMs: [700, 1000],  // 阶段二：由内向外像素扩散时长
+    holdMs: [900, 1600],    // 阶段三：完整绽放停留时长
+    fadeMs: [700, 1000],    // 停留结束后的淡出时长
   },
 
   // ---------- 靠近摄像头 (SURPRISED 之靠近路径) ----------
@@ -67,8 +79,14 @@ export const CONFIG = {
 
   // ---------- 手指指到下巴 (CONFUSED) ----------
   chin: {
-    radiusOfFaceWidth: 0.55, // 指尖与下巴距离 < 0.55 * 脸宽 判定“指到下巴”
+    radiusOfFaceWidth: 0.55, // 食指尖与下巴距离 < 0.55 * 脸宽 判定“指到下巴”
     cooldownMs: 2800,
+  },
+
+  // ---------- 问号群组 (CONFUSED 视觉) ----------
+  confused: {
+    groupsPerTrigger: [44, 56], // 每次触发的问号群组数量（错峰分批进入，持续弹幕）
+    maxGroups: 120,             // 场上群组总量上限（含未出场，约两次触发的量），防止无限累积
   },
 
   // ---------- 通用 ----------
@@ -83,8 +101,6 @@ export const CONFIG = {
     sad:       "#6fb7ff",
     angry:     "#ff5a4e",
     shy:       "#ffb3c1",
-    tired:     "#9ad0d8",
-    tiredAlt:  "#e8f4f6",
     surprised: "#ffd166",
     confused:  "#b39ddb",
   },

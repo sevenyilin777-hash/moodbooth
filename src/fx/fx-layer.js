@@ -10,7 +10,9 @@ export class FxLayer {
   spawn(el) {
     this.elements.push(el);
     if (this.elements.length > CONFIG.fx.maxElements) {
-      this.elements.shift();
+      // 优先淘汰非永久元素（如已堆积的水滴永久保留，不参与淘汰）
+      const idx = this.elements.findIndex((e) => !e.permanent);
+      this.elements.splice(idx >= 0 ? idx : 0, 1);
     }
     return el;
   }
@@ -20,8 +22,15 @@ export class FxLayer {
     this.elements = this.elements.filter((el) => !el.done && !el.dead);
   }
 
-  draw(ctx) {
-    for (const el of this.elements) el.draw(ctx);
+  /**
+   * 绘制所有元素。标记 behindPerson 的元素画到 backCtx（人物图层之下，
+   * 从人的背后飘过），其余画到 ctx（最上层）。backCtx 为空时全部画到前景。
+   */
+  draw(ctx, backCtx = null) {
+    for (const el of this.elements) {
+      if (el.behindPerson && backCtx) el.draw(backCtx);
+      else el.draw(ctx);
+    }
   }
 
   clear() {

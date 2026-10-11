@@ -23,14 +23,13 @@ export class ChinTouchDetector {
     if (face) {
       const radius = face.faceWidth * CONFIG.chin.radiusOfFaceWidth;
       for (const hand of scene.hands) {
-        for (const tip of Object.values(hand.fingertips)) {
-          if (dist(tip, face.chin) < radius) {
-            near = true;
-            pos = { ...face.chin };
-            break;
-          }
+        // 只认食指尖：食指靠近 / 指向下巴附近区域即触发
+        const tip = hand.fingertips?.index;
+        if (tip && dist(tip, face.chin) < radius) {
+          near = true;
+          pos = { ...face.chin };
+          break;
         }
-        if (near) break;
       }
     }
 

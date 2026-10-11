@@ -8,7 +8,7 @@ import { seg } from "./core/math.js";
 // 时间表（秒）：
 //  0-2.5     静置
 //  2.5-5     张开手掌 (HAPPY)
-//  5-7       握拳 (ANGRY)
+//  5-7       握拳：5.0-5.8 静握（不触发）-> 5.8-7.0 快速挥动 (ANGRY)
 //  7-8.3     静置
 //  8.3-9.3   眨左眼 (SAD)
 //  9.3-12.8  双手遮脸 (SHY)
@@ -128,7 +128,11 @@ export class DemoDriver {
     }
     if (t >= 5 && t < 7) {
       const s = DemoDriver.sway(t);
-      return [openHand(1, w * 0.74 + s.x, h * 0.6 + s.y, "fist")];
+      // 5.0-5.8 静握：不触发；5.8-7.0 快速挥动：触发 ANGRY 爆炸
+      const shake = t >= 5.8
+        ? { x: Math.sin(t * 55) * 30, y: Math.cos(t * 47) * 18 }
+        : { x: 0, y: 0 };
+      return [openHand(1, w * 0.74 + s.x + shake.x, h * 0.6 + s.y + shake.y, "fist")];
     }
     if (t >= 9.3 && t < 12.8) {
       // 双手遮脸

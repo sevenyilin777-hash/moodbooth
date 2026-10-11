@@ -32,10 +32,11 @@ body {
   padding: 12px;
 }
 
-/* 视频舞台：宽高比由 JS 按摄像头实际分辨率设置（--ar），保证特效与画面严格对齐 */
+/* 视频舞台：宽高比由 JS 按摄像头实际分辨率设置（--ar），保证特效与画面严格对齐。
+   高度预留 = 提示行 44 + 情绪选择栏 64 + 上下留白约 28 */
 #stage {
   position: relative;
-  width: min(100%, calc((100vh - 72px) * var(--ar, 1.7778)));
+  width: min(100%, calc((100vh - 136px) * var(--ar, 1.7778)));
   aspect-ratio: var(--ar, 16 / 9);
   background: #000;
   border-radius: 10px;
@@ -44,17 +45,22 @@ body {
 }
 
 #cam,
-#fx {
+#fx,
+#fx-back,
+#person {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
 }
 
-/* 自拍镜像：视频翻转；canvas 不翻转（文字/坐标在 JS 里自行镜像） */
-#cam { transform: scaleX(-1); object-fit: cover; }
+/* 自拍镜像：视频与人物剪影画布翻转；特效 canvas 不翻转（坐标在 JS 里自行镜像） */
+#cam,
+#person { transform: scaleX(-1); object-fit: cover; }
 
-#fx { pointer-events: none; }
+#fx,
+#fx-back,
+#person { pointer-events: none; }
 
 #hud {
   position: absolute;
@@ -88,6 +94,120 @@ body {
   padding: 1px 5px;
   border-radius: 4px;
 }
+
+/* ---------- 底部情绪选择栏（首页与互动模式共用） ---------- */
+#mood-bar {
+  width: 100%;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  /* 窄屏溢出时横向滚动，不遮挡摄像头画面 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.mood-bar-inner {
+  display: flex;
+  gap: 10px;
+  /* 空间足够时整体居中；窄屏溢出时自动退化为可滚动排列 */
+  margin: 0 auto;
+  padding: 0 14px;
+}
+
+.mood-entry {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 104px;
+  padding: 8px 18px;
+  font-family: var(--mono);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease,
+    background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mood-entry .mood-en {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.mood-entry .mood-zh {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+}
+
+.mood-entry:hover {
+  transform: translateY(-2px);
+  border-color: var(--mc, #fff);
+  box-shadow: 0 4px 18px color-mix(in srgb, var(--mc, #fff) 25%, transparent);
+}
+
+.mood-entry:active { transform: translateY(0); }
+
+.mood-entry.active {
+  border-color: var(--mc, #fff);
+  background: color-mix(in srgb, var(--mc, #fff) 16%, rgba(255, 255, 255, 0.04));
+  box-shadow: 0 0 0 1px var(--mc, #fff) inset;
+}
+
+.mood-entry:focus-visible {
+  outline: 2px solid var(--mc, #fff);
+  outline-offset: 2px;
+}
+
+/* ---------- 互动模式界面：返回首页（左上角）+ 当前模式提示（右上角） ---------- */
+#back-home {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 5;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-family: var(--mono);
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+#back-home:hover {
+  border-color: #d7ffd9;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+#mode-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  padding: 7px 16px;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  color: var(--mc, var(--ink));
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--mc, rgba(255, 255, 255, 0.2));
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+/* 首页隐藏模式界面元素；互动模式下 HUD 下移给返回按钮让位 */
+body[data-view="home"] #back-home,
+body[data-view="home"] #mode-badge { display: none; }
+
+body[data-view="mode"] #hud { top: 54px; }
 
 /* ---------- 启动遮罩：请求权限 / 错误提示 ---------- */
 #overlay {

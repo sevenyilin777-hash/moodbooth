@@ -2,9 +2,11 @@
 // 驱动主循环并维护调试 HUD。
 //
 //   实时模式:  http://localhost:5173/
-//             页面打开即自动请求摄像头权限；允许后立刻显示画面并持续检测，
-//             动作实时触发叠加在画面上的视觉元素。全程无需任何按钮。
-//   演示模式:  http://localhost:5173/?demo=1 （无需摄像头，合成动作走全流程）
+//             页面打开即自动请求摄像头权限；允许后显示画面，摄像头与追踪
+//             服务持续运行。底部情绪选择栏点击进入对应互动模式，同一时间
+//             只有当前情绪能触发特效；左上角「返回首页」退出。
+//   演示模式:  http://localhost:5173/?demo=1 （无需摄像头，合成动作走全流程，
+//             不做情绪过滤，保留原有演示行为）
 //
 // 快捷键: [D] 关键点调试开关  [C] 清空特效
 
@@ -14,16 +16,23 @@ import { Tracker } from "./tracking/tracker.js";
 import { GestureRecognizer } from "./gestures/recognizer.js";
 import { FxLayer } from "./fx/fx-layer.js";
 import { InteractionController } from "./controller/interaction-controller.js";
+import { MoodState, MOODS, MOOD_META } from "./controller/mood-state.js";
 import { DemoDriver } from "./demo.js";
+import { loadAssetLibrary } from "./fx/asset-library.js";
 import { HAND_CONNECTIONS } from "./tracking/scene.js";
 
 const videoEl = document.getElementById("cam");
 const canvasEl = document.getElementById("fx");
+const fxBackEl = document.getElementById("fx-back");
+const personEl = document.getElementById("person");
 const stageEl = document.getElementById("stage");
 const overlayEl = document.getElementById("overlay");
 const ovMsgEl = document.getElementById("ov-msg");
 const ovRetryEl = document.getElementById("ov-retry");
 const ovCopyEl = document.getElementById("ov-copy");
+const moodBarInnerEl = document.querySelector("#mood-bar .mood-bar-inner");
+const backBtnEl = document.getElementById("back-home");
+const modeBadgeEl = document.getElementById("mode-badge");
 const hud = {
   status: document.getElementById("hud-status"),
   gesture: document.getElementById("hud-gesture"),
@@ -41,6 +50,31 @@ let webcam = null;
 let demoDriver = null;
 
 const ctx = canvasEl.getContext("2d");
+const backCtx = fxBackEl.getContext("2d");
+const personCtx = personEl.getContext("2d");
+
+/** 三个画布（前景特效 / 背景特效 / 人物剪影）尺寸始终与视频一致 */
+function sizeCanvases(w, h) {
+  for (const c of [canvasEl, fxBackEl, personEl]) {
+    c.width = w;
+    c.height = h;
+  }
+}
+
+/**
+ * 人物图层：当前视频帧用分割剪影做 destination-in，把人抠出来。
+ * 该画布压在背景特效（问号弹幕）之上，于是弹幕从人的背后飘过；
+ * 分割不可用（demo 模式 / 模型加载失败）时保持空画布，特效照常人前显示。
+ */
+function drawPersonLayer(scene) {
+  const mask = scene?.personMask;
+  if (!mask || !webcam) return;
+  personCtx.drawImage(videoEl, 0, 0, personEl.width, personEl.height);
+  personCtx.globalCompositeOperation = "destination-in";
+  personCtx.imageSmoothingEnabled = true;
+  personCtx.drawImage(mask, 0, 0, personEl.width, personEl.height);
+  personCtx.globalCompositeOperation = "source-over";
+}
 
 function setStatus(text) {
   hud.status.textContent = text;
@@ -87,11 +121,17 @@ function cameraErrorMessage(err) {
 }
 
 async function boot() {
+  // 素材贴图（HAPPY 等）先行加载：本地文件，通常瞬间完成
+  try {
+    await loadAssetLibrary();
+  } catch (err) {
+    console.warn("[assets] 素材库加载失败，特效将使用兜底表现", err);
+  }
+
   if (isDemo) {
     setStatus("DEMO MODE\n(no camera — synthetic gestures)");
     demoDriver = new DemoDriver();
-    canvasEl.width = 1280;
-    canvasEl.height = 720;
+    sizeCanvases(1280, 720);
     stageEl.style.setProperty("--ar", 1280 / 720);
     hideOverlay();
     return;
@@ -156,8 +196,7 @@ async function boot() {
       camSettled = true;
       clearTimeout(pendingHint);
       bootState.cam = "CAMERA OK";
-      canvasEl.width = webcam.width;
-      canvasEl.height = webcam.height;
+      sizeCanvases(webcam.width, webcam.height);
       // 舞台宽高比跟随摄像头实际分辨率，保证特效与画面像素级对齐
       stageEl.style.setProperty("--ar", String(webcam.width / webcam.height));
       renderStatus();
@@ -271,8 +310,6 @@ function updateHud(now, out, scene) {
   if (s.fistHands.length) gestures.push(`FIST ×${s.fistHands.length}`);
   if (s.coverFace) gestures.push("COVER FACE");
   if (s.chinReady) gestures.push("CHIN");
-  if (s.stillActive) gestures.push("STILL");
-  else if (s.stillSeconds > 0.5) gestures.push(`quiet ${s.stillSeconds.toFixed(1)}s`);
   if (s.surpriseActive) gestures.push("MOUTH OPEN");
   if (s.approachRatio > 1.12) gestures.push(`close ${s.approachRatio.toFixed(2)}×`);
   if (s.blinkValues) gestures.push(`blink L${s.blinkValues.left.toFixed(2)} R${s.blinkValues.right.toFixed(2)}`);
@@ -294,6 +331,68 @@ function updateHud(now, out, scene) {
     "Effect: " + (effects.length ? effects.join(" ") : "-") + `   [${Math.round(fps)} fps]`;
 }
 
+// ---------------- 情绪选择首页 / 互动模式切换 ----------------
+
+/** 生成底部情绪入口（只渲染开放的情绪；SHY/TIRED 不显示但实现保留） */
+function buildMoodBar() {
+  for (const mood of MOODS) {
+    const meta = MOOD_META[mood];
+    const btn = document.createElement("button");
+    btn.className = "mood-entry";
+    btn.type = "button";
+    btn.dataset.mood = mood;
+    btn.style.setProperty("--mc", meta.color);
+    btn.innerHTML = `<span class="mood-en">${meta.en}</span><span class="mood-zh">${meta.zh}</span>`;
+    btn.addEventListener("click", () => enterMood(mood));
+    moodBarInnerEl.appendChild(btn);
+  }
+}
+
+function refreshMoodUi() {
+  const active = MoodState.active;
+  document.body.dataset.view = active ? "mode" : "home";
+  for (const btn of moodBarInnerEl.querySelectorAll(".mood-entry")) {
+    const on = btn.dataset.mood === active;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-pressed", String(on));
+  }
+  if (active) {
+    const meta = MOOD_META[active];
+    modeBadgeEl.textContent = `${meta.en} · ${meta.zh}`;
+    modeBadgeEl.style.setProperty("--mc", meta.color);
+  } else {
+    modeBadgeEl.textContent = "";
+  }
+}
+
+/**
+ * 进入某情绪模式（首页点击）或直接切换模式（模式间点击入口）。
+ * 切换流程：停旧模式触发（门控随状态生效）-> 清理旧模式视觉元素与
+ * 冷却状态 -> 更新 activeMood。共享的摄像头/追踪/识别服务保持运行，
+ * 不重新申请权限、不重复初始化。
+ */
+function enterMood(mood) {
+  if (MoodState.is(mood)) return; // 重复点击当前模式：不打断已有画面
+  if (MoodState.active) {
+    fxLayer.clear();            // 清掉旧模式全部视觉元素（含带入场延迟的待出场元素）
+    controller.resetMoodState(); // 重置旧模式的冷却计时
+  }
+  MoodState.set(mood); // 触发 UI 同步；主循环的门控随之只放行新情绪
+}
+
+/** 互动模式 -> 返回情绪选择首页 */
+function exitToHome() {
+  if (!MoodState.active) return;
+  fxLayer.clear();
+  controller.resetMoodState();
+  MoodState.set(null);
+}
+
+backBtnEl.addEventListener("click", exitToHome);
+buildMoodBar();
+MoodState.subscribe(refreshMoodUi);
+refreshMoodUi();
+
 // ---------------- 主循环 ----------------
 
 let last = 0;
@@ -313,12 +412,17 @@ function loop(now) {
   if (!scene) return;
 
   const out = recognizer.update(scene, now);
-  controller.update(out, scene, now, scene.frame);
+  // 模式隔离：实时模式只放行当前情绪的触发（首页 = 全部不放行）；
+  // 演示模式传 "ALL" 保留原有全流程演示行为
+  controller.update(out, scene, now, scene.frame, isDemo ? "ALL" : MoodState.active);
   fxLayer.update(dt, scene, now);
 
   ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+  backCtx.clearRect(0, 0, fxBackEl.width, fxBackEl.height);
+  personCtx.clearRect(0, 0, personEl.width, personEl.height);
   if (showDebug.on) drawDebug(ctx, scene);
-  fxLayer.draw(ctx);
+  fxLayer.draw(ctx, backCtx);
+  drawPersonLayer(scene);
 
   updateHud(now, out, scene);
 }
